@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
+	"strings"
 	"net/http"
 	"os"
 	"testing"
@@ -69,8 +71,17 @@ func call(t testing.TB, method, url, key string, body any) resp {
 	return out
 }
 
+// post behaves like a well-written client: on 503 (dependency down) or 409 (still in progress) it
+// retries with the same Idempotency-Key until it gets a final answer.
 func post(t testing.TB, path string, body any) resp {
-	return call(t, "POST", gatewayURL+path, newKey(), body)
+	key := newKey()
+	for i := 0; ; i++ {
+		r := call(t, "POST", gatewayURL+path, key, body)
+		if (r.Code != 503 && r.Code != 409) || i == 40 {
+			return r
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func expect(t testing.TB, r resp, code int) resp {
@@ -160,4 +171,18 @@ func getJSON(t testing.TB, url string) map[string]any {
 func transferStatus(t testing.TB, id string) string {
 	r := expect(t, call(t, "GET", gatewayURL+"/v1/transfers/"+id, "", nil), 200)
 	return fmt.Sprint(r.Body["status"])
+}
+
+// makeIBAN computes ISO 13616 check digits for a country code and BBAN.
+func makeIBAN(country, bban string) string {
+	var digits strings.Builder
+	for _, r := range bban + country + "00" {
+		if r >= 'A' && r <= 'Z' {
+			digits.WriteString(fmt.Sprint(int(r-'A') + 10))
+		} else {
+			digits.WriteRune(r)
+		}
+	}
+	n, _ := new(big.Int).SetString(digits.String(), 10)
+	return fmt.Sprintf("%s%02d%s", country, 98-new(big.Int).Mod(n, big.NewInt(97)).Int64(), bban)
 }

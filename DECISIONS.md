@@ -60,3 +60,7 @@ Each entry gives the choice, the alternatives considered, and the reason. Entrie
 
 ### D15. Phase 1 scaffold verified together with the phase 2 slice
 **Why:** The scaffold's `docker-compose.yml` was written with the slice services already in it, so the first `docker compose up` that could pass was the slice's. Both were verified in the same run: all containers healthy, `TestTransferEndToEnd` green. They were then committed as two commits for history.
+
+### D16. Every long-running container has `restart: unless-stopped`; clients retry 503/409 with the same key
+**Alternatives:** rely on the operator to restart crashed infrastructure; clients treat 503 as final.
+**Why:** During development the Docker daemon was restarted underneath the stack. The services came back, but the infrastructure containers (Postgres, Redpanda, Redis) did not. With restart policies everywhere, a daemon restart heals itself. The gateway's recovery loop then finished every request that was in flight (seen in the logs: "recovered in-flight resource"). The API's 503 `processing` answer says "retry with the same Idempotency-Key", and the e2e client does exactly that, as production clients should.
