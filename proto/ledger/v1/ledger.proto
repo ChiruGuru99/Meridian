@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package ledger.v1;
+
+option go_package = "meridian/gateway/gen/ledgerv1;ledgerv1";
+option java_multiple_files = true;
+option java_package = "io.meridian.ledger.grpc.v1";
+
+// Double-entry ledger. Amounts are signed integer minor units:
+// debit > 0, credit < 0. A transaction is accepted only if, for every
+// currency, its postings sum to zero.
+service LedgerService {
+  rpc CreateAccount(CreateAccountRequest) returns (Account);
+  rpc GetAccount(GetAccountRequest) returns (Account);
+  rpc PostTransaction(PostTransactionRequest) returns (Transaction);
+  rpc ReverseTransaction(ReverseTransactionRequest) returns (Transaction);
+  rpc GetTransaction(GetTransactionRequest) returns (Transaction);
+}
+
+enum AccountType {
+  ACCOUNT_TYPE_UNSPECIFIED = 0;
+  ASSET = 1;
+  LIABILITY = 2;
+  EQUITY = 3;
+  INCOME = 4;
+  EXPENSE = 5;
+}
+
+message CurrencyLimit {
+  string currency = 1;
+  // Absent = unlimited overdraft (system accounts only).
+  optional int64 overdraft_limit = 2;
+}
+
+message CreateAccountRequest {
+  // Optional caller-chosen id; generated when empty. Idempotent on id.
+  string id = 1;
+  string name = 2;
+  AccountType type = 3;
+  repeated CurrencyLimit currencies = 4;
+}
+
+message GetAccountRequest {
+  string id = 1;
+}
+
+message Balance {
+  string currency = 1;
+  // In the account's normal-balance sign (customer money is positive).
+  int64 balance = 2;
+  optional int64 overdraft_limit = 3;
+  int64 version = 4;
+}
+
+message Account {
+  string id = 1;
+  string name = 2;
+  AccountType type = 3;
+  repeated Balance balances = 4;
+}
+
+message Posting {
+  string account_id = 1;
+  string currency = 2;
+  int64 amount = 3;
+}
+
+message PostTransactionRequest {
+  // Same key + same payload returns the original transaction.
+  // Same key + different payload fails with ALREADY_EXISTS.
+  string idempotency_key = 1;
+  string type = 2;
+  string description = 3;
+  repeated Posting postings = 4;
+  map<string, string> metadata = 5;
+}
+
+message ReverseTransactionRequest {
+  string idempotency_key = 1;
+  string transaction_id = 2;
+  string reason = 3;
+}
+
+message GetTransactionRequest {
+  string id = 1;
+}
+
+message Transaction {
+  string id = 1;
+  string idempotency_key = 2;
+  string type = 3;
+  string description = 4;
+  repeated Posting postings = 5;
+  map<string, string> metadata = 6;
+  string reverses_id = 7;
+  // RFC 3339 UTC.
+  string booked_at = 8;
+}

@@ -1,0 +1,164 @@
+name: meridian
+
+x-otel: &otel
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+
+services:
+  # ------------------------------------------------------------------ data
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    command: ["postgres", "-c", "max_connections=200", "-c", "shared_buffers=128MB"]
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ledger"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redpanda:
+    image: redpandadata/redpanda:v26.1.18
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports: ["19092:19092"]
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  redpanda-init:
+    image: redpandadata/redpanda:v26.1.18
+    depends_on:
+      redpanda: { condition: service_healthy }
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >-
+        for t in ledger.transactions.v1 payments.events.v1 rail.payout-instructions.v1 rail.payout-results.v1; do
+          rpk topic create $$t -p 3 -r 1 -X brokers=redpanda:9092 || true;
+        done
+    restart: "no"
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # ------------------------------------------------------------------ services
+  ledger-service:
+    build:
+      context: .
+      dockerfile: ledger-service/Dockerfile
+    environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: ledger-service
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      LEDGER_DB_URL: jdbc:postgresql://postgres:5432/ledger
+      KAFKA_BOOTSTRAP: redpanda:9092
+    ports: ["8081:8081"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health/readiness"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+      start_period: 20s
+    restart: unless-stopped
+
+  payment-gateway:
+    build: ./payment-gateway
+    environment:
+      <<: *otel
+      DATABASE_URL: postgres://gateway:gateway@postgres:5432/gateway
+      LEDGER_ADDR: ledger-service:9091
+      REDIS_ADDR: redis:6379
+      KAFKA_BROKERS: redpanda:9092
+      # key:client:rate-per-second:burst. Simulated keys for local use only.
+      API_KEYS: demo-key-6f1c2a9e7b3d4f58:demo:50:100,load-key-93ab1c7d5e2f4a60:loadtest:100000:100000
+    ports: ["8080:8080", "8082:8082"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
+      ledger-service: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  rail-sim:
+    build: ./payment-gateway
+    entrypoint: ["railsim"]
+    environment:
+      <<: *otel
+      REDIS_ADDR: redis:6379
+      KAFKA_BROKERS: redpanda:9092
+      RAIL_LATENCY: 100ms
+      RAIL_REJECT_RATE: "0"
+    depends_on:
+      redis: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ observability
+  otel-collector:
+    image: otel/opentelemetry-collector:0.161.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./infra/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    depends_on: [jaeger]
+
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    ports: ["16686:16686"]
+
+  prometheus:
+    image: prom/prometheus:v3.13.4
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2d"]
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:12.4.12
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/meridian.json
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus, jaeger]
+
+volumes:
+  pgdata:
