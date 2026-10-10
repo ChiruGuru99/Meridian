@@ -1,0 +1,55 @@
+server:
+  port: 8081
+  shutdown: graceful
+
+spring:
+  application:
+    name: ledger-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${LEDGER_DB_URL:jdbc:postgresql://localhost:5432/ledger}
+    username: ${LEDGER_DB_USER:ledger_app}
+    password: ${LEDGER_DB_PASSWORD:ledger_app}
+    hikari:
+      maximum-pool-size: ${LEDGER_DB_POOL:20}
+      connection-timeout: 3000
+      # Bound every stall: a blocked lock or a slow statement fails fast and rolls back.
+      connection-init-sql: SET lock_timeout = '2s'; SET statement_timeout = '5s'
+  flyway:
+    user: ${LEDGER_DB_OWNER:ledger_owner}
+    password: ${LEDGER_DB_OWNER_PASSWORD:ledger_owner}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:19092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+
+ledger:
+  grpc:
+    port: ${LEDGER_GRPC_PORT:9091}
+  outbox:
+    poll-ms: 200
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus, info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  observations:
+    key-values:
+      application: ledger-service
