@@ -11,8 +11,8 @@ Environment notes (for resuming):
 | 1. Design + scaffold + compose + CI | done | `DESIGN.md`; `docker compose up -d --wait` brings all 10 containers healthy |
 | 2. Thin vertical slice | done | `make e2e` → `TestTransferEndToEnd` PASS (gateway → gRPC → ledger → Postgres); `/api/invariants` ok |
 | 3. Ledger complete + invariant/property tests | done | `mvn verify`: 27 tests green (6 unit, 16 Testcontainers integration incl. raw-SQL attacks, 3 jqwik properties incl. model-based, 4,000-transfer/32-thread concurrency test, outbox→Redpanda relay test); stack rebuilt, e2e green |
-| 4. Gateway: payments, idempotency, state machine | next | |
-| 5. Outbox, events, saga, idempotent consumers | | |
+| 4. Gateway: payments, idempotency, state machine | done | `go test ./...`: state-machine table tests + rapid property; HTTP integration tests on Testcontainers Postgres+Redis with a fault-injecting fake ledger (lifecycle, decline, void, replay, key reuse, 30 racing requests → one effect, ledger outage → recovery, lost response → no double post, lock takeover, ownership, strict decoding, rate limit + fail-open, rapid random ops with retries and faults). Mutation check: a non-deterministic ledger key is caught by 2 tests. e2e: 3 tests green on the rebuilt stack |
+| 5. Outbox, events, saga, idempotent consumers | next | |
 | 6. Reconciliation + statement simulator | | |
 | 7. Observability | | |
 | 8. Concurrency, failure, load tests + PERFORMANCE.md | | |

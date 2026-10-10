@@ -1,0 +1,53 @@
+# 2026/10/10 18:18:00.923642 [TestRandomOperationsWithRetries] [rapid] draw payments: 1
+# 2026/10/10 18:18:00.923656 [TestRandomOperationsWithRetries] [rapid] draw amount: 1
+# 2026/10/10 18:18:00.940449 [TestRandomOperationsWithRetries] [rapid] draw steps: 4
+# 2026/10/10 18:18:00.940459 [TestRandomOperationsWithRetries] [rapid] draw fault: 1
+# 2026/10/10 18:18:00.940462 [TestRandomOperationsWithRetries] [rapid] draw payment: 0
+# 2026/10/10 18:18:00.940467 [TestRandomOperationsWithRetries] [rapid] draw op: "capture"
+# 2026/10/10 18:18:00.940469 [TestRandomOperationsWithRetries] [rapid] draw partial: false
+# 2026/10/10 18:18:00.955978 [TestRandomOperationsWithRetries] [rapid] draw retry: true
+# 2026/10/10 18:18:00.955990 [TestRandomOperationsWithRetries] [rapid] draw which: 0
+# 2026/10/10 18:18:00.960444 [TestRandomOperationsWithRetries] [rapid] draw retry: true
+# 2026/10/10 18:18:00.960461 [TestRandomOperationsWithRetries] [rapid] draw which: 0
+# 2026/10/10 18:18:00.986192 [TestRandomOperationsWithRetries] [rapid] draw retry: false
+# 2026/10/10 18:18:00.986204 [TestRandomOperationsWithRetries] [rapid] draw fault: 1
+# 2026/10/10 18:18:00.986208 [TestRandomOperationsWithRetries] [rapid] draw payment: 0
+# 2026/10/10 18:18:00.986211 [TestRandomOperationsWithRetries] [rapid] draw op: "authorise"
+# 2026/10/10 18:18:01.055989 [TestRandomOperationsWithRetries] payer balance 99998, states imply 99999 (held 1 captured 0 refunded 0)
+# 
+v0.4.8#2675310069322103629
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x38e38e38e38e4
+0x3
+0x0
+0x0
+0x1
+0x0
+0x0
+0x0
+0x0
+0x1
+0x0
+0x1
+0x0
+0x0
+0x0
+0x1
+0x0
+0x1
+0x0
+0x0
+0x0
+0x0
+0x1
+0x0
+0x0
+0x0
+0x0
+0x0
