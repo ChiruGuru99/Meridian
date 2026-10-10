@@ -51,7 +51,7 @@ public class OutboxRelay {
         metrics.gauge("ledger.outbox.pending", this, r -> r.pending());
     }
 
-    @Scheduled(fixedDelayString = "${ledger.outbox.poll-ms:200}")
+    @Scheduled(fixedDelayString = "${ledger.outbox.poll-ms:200}", initialDelayString = "${ledger.outbox.poll-ms:200}")
     public void relay() {
         try {
             while (publishBatch() > 0) {
