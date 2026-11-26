@@ -53,6 +53,7 @@ public class QueryController {
     @GetMapping("/accounts/{id}/entries")
     public List<Entry> entries(@PathVariable String id, @RequestParam String currency,
                                @RequestParam(required = false) Instant from, @RequestParam(required = false) Instant to,
+                               @RequestParam(required = false) Long after,
                                @RequestParam(defaultValue = "500") int limit) {
         ledger.getAccount(id); // 404 for unknown accounts
         return jdbc.sql("""
@@ -69,10 +70,12 @@ public class QueryController {
                         ) s
                         WHERE (CAST(:from AS timestamptz) IS NULL OR booked_at >= :from)
                           AND (CAST(:to AS timestamptz) IS NULL OR booked_at < :to)
+                          AND (CAST(:after AS bigint) IS NULL OR id > :after)
                         ORDER BY id LIMIT :limit""")
                 .param("id", id).param("cur", currency)
                 .param("from", from == null ? null : Timestamp.from(from))
                 .param("to", to == null ? null : Timestamp.from(to))
+                .param("after", after)
                 .param("limit", clamp(limit, 10_000))
                 .query((rs, n) -> new Entry(rs.getLong(1), rs.getObject(2, UUID.class), rs.getString(3), rs.getString(4),
                         rs.getTimestamp(5).toInstant(), rs.getString(6), rs.getLong(7), rs.getLong(8), rs.getLong(9),

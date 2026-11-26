@@ -79,6 +79,21 @@ class LedgerIntegrationTest {
     }
 
     @Test
+    void entryHistoryPaginatesByPostingId() {
+        String a = newAccount("Cursor account", 0L, "EUR"), b = newAccount("Cursor peer", 0L, "EUR");
+        fund(a, "EUR", 10_000);
+        ledger().post(transfer(key(), a, b, "EUR", 250));
+        var controller = TestEnv.context().getBean(QueryController.class);
+
+        var first = controller.entries(a, "EUR", null, null, null, 1);
+        var second = controller.entries(a, "EUR", null, null, first.getFirst().postingId(), 1);
+
+        assertThat(first).hasSize(1);
+        assertThat(second).hasSize(1);
+        assertThat(second.getFirst().postingId()).isGreaterThan(first.getFirst().postingId());
+    }
+
+    @Test
     void sameKeyDifferentPayloadIsRejected() {
         String a = newAccount("A", 0L, "EUR"), b = newAccount("B", 0L, "EUR");
         fund(a, "EUR", 1_000);
@@ -233,7 +248,7 @@ class LedgerIntegrationTest {
         Instant before = Instant.now().minusSeconds(1);
         fund(a, "EUR", 1_000);
         ledger().post(transfer(key(), a, b, "EUR", 300));
-        var entries = TestEnv.bean(QueryController.class).entries(a, "EUR", before, null, 100);
+        var entries = TestEnv.bean(QueryController.class).entries(a, "EUR", before, null, null, 100);
         assertThat(entries).extracting(QueryController.Entry::balanceChange).containsExactly(1_000L, -300L);
         assertThat(entries).extracting(QueryController.Entry::runningBalance).containsExactly(1_000L, 700L);
     }
