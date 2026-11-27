@@ -77,7 +77,9 @@ services:
       OTEL_LOGS_EXPORTER: none
       LEDGER_DB_URL: jdbc:postgresql://postgres:5432/ledger
       KAFKA_BOOTSTRAP: redpanda:9092
-    ports: ["8081:8081"]
+      LEDGER_GRPC_API_KEY: ${LEDGER_GRPC_API_KEY:-dev-ledger-key-0123456789abcdef}
+      LEDGER_HTTP_API_KEY: ${LEDGER_HTTP_API_KEY:-dev-ledger-read-key-0123456789abcdef}
+    ports: ["127.0.0.1:8081:8081"]
     depends_on:
       postgres: { condition: service_healthy }
       redpanda-init: { condition: service_completed_successfully }
@@ -99,7 +101,9 @@ services:
       KAFKA_BROKERS: redpanda:9092
       # key:client:rate-per-second:burst. Simulated keys for local use only.
       API_KEYS: demo-key-6f1c2a9e7b3d4f58:demo:50:100,load-key-93ab1c7d5e2f4a60:loadtest:100000:100000
-    ports: ["8080:8080", "8082:8082"]
+      LEDGER_API_KEY: ${LEDGER_GRPC_API_KEY:-dev-ledger-key-0123456789abcdef}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-0123456789abcdef}
+    ports: ["8080:8080", "127.0.0.1:8082:8082"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -137,9 +141,11 @@ services:
       RECON_DB_URL: postgresql://recon:recon@postgres:5432/recon
       KAFKA_BROKERS: redpanda:9092
       LEDGER_URL: http://ledger-service:8081
+      LEDGER_HTTP_API_KEY: ${LEDGER_HTTP_API_KEY:-dev-ledger-read-key-0123456789abcdef}
+      RECON_API_KEY: ${RECON_API_KEY:-dev-recon-read-key-0123456789abcdef}
     volumes:
       - recon-data:/data
-    ports: ["8083:8083"]
+    ports: ["127.0.0.1:8083:8083"]
     depends_on:
       postgres: { condition: service_healthy }
       redpanda-init: { condition: service_completed_successfully }

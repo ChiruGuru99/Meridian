@@ -3,7 +3,7 @@
 Environment notes (for resuming):
 - Docker, JDK 21, Maven, Go and make run inside **WSL Ubuntu** (`wsl -d Ubuntu`), with the repo mounted at `/mnt/c/Users/user/git/Meridian`. Windows has no Docker CLI.
 - If `go build` complains about missing C headers in WSL, use `CGO_ENABLED=0` (libc6-dev may not be installed yet).
-- Ports: gateway 8080, gateway admin 8082, ledger 8081, recon 8083, console 3000, grafana 3001, prometheus 9090, jaeger 16686, postgres 5432, kafka 19092.
+- Ports: gateway 8080; loopback-only admin 8082, ledger 8081 and recon 8083; console 3000, grafana 3001, prometheus 9090, jaeger 16686, postgres 5432, kafka 19092. Internal data routes use bearer credentials.
 - The Ubuntu distro is terminated (dockerd stopped) a few seconds after the last `wsl.exe` session exits. Keep one session open: `wsl -d Ubuntu -- sleep infinity` in the background.
 - Stop the compose stack before `mvn verify` on this 4 GB VM; Testcontainers starts its own Postgres and Redpanda.
 

@@ -57,7 +57,11 @@ def main(argv: list[str] | None = None) -> int:
         port = int(os.environ.get("PORT", "8083"))
         log.info("recon API on :%d, ingesting %s for %s", port, ingest.TOPIC, account)
         try:
-            api.serve(db_url, port).serve_forever()
+            api.serve(
+                db_url,
+                port,
+                os.environ.get("RECON_API_KEY", "dev-recon-read-key-0123456789abcdef"),
+            ).serve_forever()
         finally:
             stop.set()
         return 0
@@ -79,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
             args.out,
             args.seed,
             inject=not args.no_injections,
+            ledger_api_key=os.environ.get(
+                "LEDGER_HTTP_API_KEY", "dev-ledger-read-key-0123456789abcdef"
+            ),
         )
         print(
             f"statement for {summary['business_date']} written to "

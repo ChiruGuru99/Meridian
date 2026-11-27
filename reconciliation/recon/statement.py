@@ -131,6 +131,7 @@ def fetch_nostro(
     account: str,
     currency: str,
     business_date: date,
+    api_key: str = "",
 ) -> tuple[int, list[Entry]]:
     """Read all history through the business day using posting-id keyset pagination."""
     start = datetime.combine(business_date, datetime.min.time(), tzinfo=timezone.utc)
@@ -146,10 +147,13 @@ def fetch_nostro(
         if cursor:
             params["after"] = cursor
         query = urllib.parse.urlencode(params)
-        with urllib.request.urlopen(
-            f"{ledger_url}/api/accounts/{account}/entries?{query}",
-            timeout=30,
-        ) as response:
+        url = f"{ledger_url}/api/accounts/{account}/entries?{query}"
+        target: str | urllib.request.Request = url
+        if api_key:
+            target = urllib.request.Request(
+                url, headers={"Authorization": f"Bearer {api_key}"}
+            )
+        with urllib.request.urlopen(target, timeout=30) as response:
             page = json.load(response)
         if not isinstance(page, list):
             raise ValueError("ledger entries response must be an array")
@@ -218,14 +222,20 @@ def generate(
     seed: int,
     inject: bool,
     currencies: tuple[str, ...] = ("EUR", "USD", "GBP"),
+    ledger_api_key: str = "",
 ) -> dict:
     day = business_date.isoformat()
     rows: list[dict] = []
     truth: list[dict] = []
-    fetched = [
-        (currency, *fetch_nostro(ledger_url, account, currency, business_date))
-        for currency in currencies
-    ]
+    fetched = []
+    for currency in currencies:
+        if ledger_api_key:
+            result = fetch_nostro(
+                ledger_url, account, currency, business_date, ledger_api_key
+            )
+        else:
+            result = fetch_nostro(ledger_url, account, currency, business_date)
+        fetched.append((currency, *result))
     active = [item for item in fetched if item[1] != 0 or item[2]]
     if not active:
         currency = currencies[0] if currencies else "EUR"

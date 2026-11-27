@@ -178,13 +178,13 @@ recon_breaks(id, run_id FK, break_type, currency, reference, ledger_amount, bank
 ### Public REST API: payment-gateway `:8080`
 Every request sends `Authorization: Bearer <api key>`. Every POST also sends
 `Idempotency-Key: <1..255 printable chars>`. Amounts are `{"amount_minor": int64, "currency": "EUR"}`.
+Client-created accounts cannot request an overdraft; only funded customer balances may be used.
 Errors use RFC 7807 `application/problem+json` with a stable `code`.
 
 | Method & path | Body | Success | Notable errors |
 |---------------|------|---------|----------------|
 | `POST /v1/accounts` | `{name, currencies:[{currency, overdraft_limit_minor}]}` | 201 account | 400 |
 | `GET /v1/accounts/{id}` | | 200 account with balances | 404 |
-| `POST /v1/deposits` | `{account_id, amount, reference}` | 201 deposit | 404, 422 |
 | `POST /v1/payments` | `{payer_account_id, payee_account_id, amount, description}` | 201 `CREATED` | 400, 422 |
 | `POST /v1/payments/{id}/authorise` | | 200 `AUTHORISED` | 402 `DECLINED` (insufficient funds), 409 invalid state |
 | `POST /v1/payments/{id}/capture` | `{amount?}` | 200 `CAPTURED` | 409, 422 amount > authorised |
@@ -200,6 +200,15 @@ Idempotency semantics:
 - Same key while the first request is still running: `409 request_in_progress`. After the lock expires (10 s), the retry re-drives the operation, which is safe because the ledger keys are deterministic.
 
 Rate limit: a token bucket per client in Redis. Exceeding it returns 429 with `Retry-After`.
+The payer client may authorise and cancel; only the client that owns the payee account may
+capture and refund. Payment creation validates that both accounts are active and support the
+requested currency before any state is persisted.
+
+### Gateway admin `:8082`
+All `/ops` routes require `Authorization: Bearer <admin key>`. Bank-originated funding is
+submitted to `POST /ops/deposits` with `{account_id, amount, reference}` plus an
+`Idempotency-Key`; this endpoint is not part of the client API. The destination account's
+owner is derived from trusted account metadata.
 
 ### Payment state machine
 ```mermaid
@@ -251,10 +260,13 @@ Status codes: `INVALID_ARGUMENT` (unbalanced, zero amount, bad currency), `NOT_F
 `FAILED_PRECONDITION` with an `ErrorInfo` reason of `INSUFFICIENT_FUNDS`, `CURRENCY_NOT_ENABLED` or
 `ALREADY_REVERSED`, `ALREADY_EXISTS` (idempotency key reused with a different payload), and
 `UNAVAILABLE` / `DEADLINE_EXCEEDED` (retryable).
+Every call, including health checks, requires the internal gRPC bearer credential.
 
 ### Ledger HTTP `:8081` (read-only)
 `GET /api/accounts`, `/api/accounts/{id}`, `/api/accounts/{id}/entries?currency=&from=&to=&after=&limit=`,
 `/api/transactions?limit=`, `/api/transactions/{id}`, `/api/invariants`, `/actuator/health|prometheus`.
+`/api/**` requires the internal ledger read credential; actuator health and metrics remain
+available only on the service network.
 The entry cursor is the previous response's posting id, so the statement simulator can
 page through more than 10,000 postings without skipping or repeating a page.
 
@@ -264,6 +276,10 @@ page through more than 10,000 postings without skipping or repeating a page.
 movement and closing totals. The ingester skips malformed events, commits Kafka offsets
 only after the valid part of a batch is stored, and remains idempotent on
 `(transaction_id, seq)`.
+`/api/**` requires the reconciliation read credential. Gateway admin, ledger HTTP and
+reconciliation ports are bound to loopback when published by the local Compose stack.
+The Compose and application defaults are development-only; deployments override the
+`ADMIN_API_KEY`, `LEDGER_GRPC_API_KEY`, `LEDGER_HTTP_API_KEY` and `RECON_API_KEY` values.
 
 ### Events (Kafka)
 | Topic | Producer | Key | Consumer |

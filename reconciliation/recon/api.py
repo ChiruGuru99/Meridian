@@ -1,6 +1,7 @@
 """Read-only reconciliation HTTP API, metrics, and health endpoint."""
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import re
@@ -23,7 +24,7 @@ def _json_default(value):
     raise TypeError(type(value))
 
 
-def make_handler(db_url: str | None):
+def make_handler(db_url: str | None, api_key: str):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             pass
@@ -43,6 +44,20 @@ def make_handler(db_url: str | None):
 
         def do_GET(self) -> None:  # noqa: N802
             path = self.path.split("?", 1)[0]
+            if path.startswith("/api/"):
+                expected = f"Bearer {api_key}"
+                if not hmac.compare_digest(self.headers.get("Authorization", ""), expected):
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/problem+json")
+                    self.send_header("WWW-Authenticate", 'Bearer realm="meridian-recon"')
+                    body = json.dumps({
+                        "code": "unauthenticated",
+                        "detail": "a valid reconciliation credential is required",
+                    }).encode()
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
             try:
                 if path == "/metrics":
                     return self.send(200, generate_latest(), CONTENT_TYPE_LATEST)
@@ -86,5 +101,5 @@ def make_handler(db_url: str | None):
     return Handler
 
 
-def serve(db_url: str | None, port: int) -> ThreadingHTTPServer:
-    return ThreadingHTTPServer(("0.0.0.0", port), make_handler(db_url))
+def serve(db_url: str | None, port: int, api_key: str) -> ThreadingHTTPServer:
+    return ThreadingHTTPServer(("0.0.0.0", port), make_handler(db_url, api_key))
