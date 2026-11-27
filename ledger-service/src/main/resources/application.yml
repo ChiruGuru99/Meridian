@@ -33,6 +33,9 @@ spring:
 ledger:
   grpc:
     port: ${LEDGER_GRPC_PORT:9091}
+    api-key: ${LEDGER_GRPC_API_KEY:dev-ledger-key-0123456789abcdef}
+  http:
+    api-key: ${LEDGER_HTTP_API_KEY:dev-ledger-read-key-0123456789abcdef}
   outbox:
     poll-ms: 200
 

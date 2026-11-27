@@ -21,12 +21,16 @@ public class GrpcServer implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(GrpcServer.class);
     private final GrpcLedgerEndpoint endpoint;
     private final int port;
+    private final String apiKey;
     private final HealthStatusManager health = new HealthStatusManager();
     private volatile Server server;
 
-    public GrpcServer(GrpcLedgerEndpoint endpoint, @Value("${ledger.grpc.port:9091}") int port) {
+    public GrpcServer(GrpcLedgerEndpoint endpoint,
+                      @Value("${ledger.grpc.port:9091}") int port,
+                      @Value("${ledger.grpc.api-key}") String apiKey) {
         this.endpoint = endpoint;
         this.port = port;
+        this.apiKey = apiKey;
     }
 
     @Override
@@ -34,6 +38,7 @@ public class GrpcServer implements SmartLifecycle {
         try {
             server = NettyServerBuilder.forPort(port)
                     .executor(Executors.newVirtualThreadPerTaskExecutor())
+                    .intercept(new GrpcApiKeyInterceptor(apiKey))
                     .addService(endpoint)
                     .addService(health.getHealthService())
                     .build()

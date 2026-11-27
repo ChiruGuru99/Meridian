@@ -2,11 +2,14 @@ package io.meridian.ledger;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.rpc.ErrorInfo;
+import io.grpc.ClientInterceptors;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.protobuf.StatusProto;
+import io.grpc.stub.MetadataUtils;
 import io.meridian.ledger.LedgerException.Reason;
 import io.meridian.ledger.Model.PostCommand;
 import io.meridian.ledger.Model.PostingLine;
@@ -265,7 +268,18 @@ class LedgerIntegrationTest {
         int port = TestEnv.bean(GrpcServer.class).port();
         ManagedChannel ch = NettyChannelBuilder.forAddress("localhost", port).usePlaintext().build();
         try {
-            var stub = LedgerServiceGrpc.newBlockingStub(ch);
+            var unauthenticated = org.junit.jupiter.api.Assertions.assertThrows(
+                    StatusRuntimeException.class,
+                    () -> LedgerServiceGrpc.newBlockingStub(ch).getAccount(
+                            io.meridian.ledger.grpc.v1.GetAccountRequest.newBuilder().setId(a).build()));
+            assertThat(unauthenticated.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+            Metadata headers = new Metadata();
+            headers.put(
+                    Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER),
+                    "Bearer test-ledger-key-0123456789abcdef");
+            var authenticated = ClientInterceptors.intercept(
+                    ch, MetadataUtils.newAttachHeadersInterceptor(headers));
+            var stub = LedgerServiceGrpc.newBlockingStub(authenticated);
             var req = PostTransactionRequest.newBuilder().setIdempotencyKey(key()).setType("TRANSFER")
                     .addPostings(Posting.newBuilder().setAccountId(a).setCurrency("EUR").setAmount(1))
                     .addPostings(Posting.newBuilder().setAccountId(b).setCurrency("EUR").setAmount(-1))

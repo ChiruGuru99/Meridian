@@ -39,6 +39,8 @@ public final class TestEnv {
                             "--spring.flyway.user=" + pg.getUsername(),
                             "--spring.flyway.password=" + pg.getPassword(),
                             "--ledger.grpc.port=0",
+                            "--ledger.grpc.api-key=test-ledger-key-0123456789abcdef",
+                            "--ledger.http.api-key=test-ledger-read-key-0123456789abcdef",
                             "--ledger.outbox.poll-ms=3600000",
                             "--spring.kafka.bootstrap-servers=localhost:1");
         }
