@@ -168,9 +168,9 @@ inbox(consumer, message_id, processed_at, PK(consumer, message_id))
 ```
 internal_entries(transaction_id, seq, account_id, currency, amount, booked_at, idempotency_key,
                  PK(transaction_id, seq))                -- idempotent ingest of ledger events
-recon_runs(id, business_date, account_id, currency, statement_file, status, started_at, finished_at,
-           ledger_total, bank_total, opening/closing balances, matched_count, break_count)
-recon_breaks(id, run_id FK, break_type, reference, ledger_amount, bank_amount, details jsonb)
+recon_runs(id, business_date, account_id, statement_file, started_at, finished_at,
+           matched_count, break_count, totals jsonb)
+recon_breaks(id, run_id FK, break_type, currency, reference, ledger_amount, bank_amount, detail)
 ```
 
 ## 6. API contracts
@@ -253,8 +253,17 @@ Status codes: `INVALID_ARGUMENT` (unbalanced, zero amount, bad currency), `NOT_F
 `UNAVAILABLE` / `DEADLINE_EXCEEDED` (retryable).
 
 ### Ledger HTTP `:8081` (read-only)
-`GET /api/accounts`, `/api/accounts/{id}`, `/api/accounts/{id}/entries?currency=&from=&to=&limit=`,
+`GET /api/accounts`, `/api/accounts/{id}`, `/api/accounts/{id}/entries?currency=&from=&to=&after=&limit=`,
 `/api/transactions?limit=`, `/api/transactions/{id}`, `/api/invariants`, `/actuator/health|prometheus`.
+The entry cursor is the previous response's posting id, so the statement simulator can
+page through more than 10,000 postings without skipping or repeating a page.
+
+### Reconciliation HTTP `:8083` (read-only)
+`GET /api/recon/runs`, `/api/recon/runs/{id}`, `/api/recon/ingestion`,
+`/healthz`, `/metrics`. The batch persists every typed break and per-currency opening,
+movement and closing totals. The ingester skips malformed events, commits Kafka offsets
+only after the valid part of a batch is stored, and remains idempotent on
+`(transaction_id, seq)`.
 
 ### Events (Kafka)
 | Topic | Producer | Key | Consumer |
@@ -276,9 +285,10 @@ Every event carries `event_id` (UUID), `event_type`, `occurred_at`, and W3C `tra
 | Database timeouts (lock or statement) | Ledger transaction rolls back atomically; the gateway sees a retryable error. | Same as above. Postgres `lock_timeout`/`statement_timeout` bound the stall. |
 | Broker down | Outbox rows pile up unpublished; payouts wait in `SUBMITTED`. The API keeps accepting work. | The relay retries; when the broker returns, events flow and sagas complete. |
 | Duplicate event delivery | The consumer finds the message id in `inbox` (gateway) or the natural key (recon) and skips it. | Built in. |
+| Malformed ledger event | Recon counts the poison message, logs the validation failure and skips it without blocking later offsets. | The consumer continues after `recon_events_malformed_total` advances. |
 | Rail rejects a payout | Saga compensates by reversing the reserve. | Built in, terminal state `COMPENSATED`. |
 | Rail never answers | Transfer stays `SUBMITTED` (that is the truth: it is pending at the rail). | Visible in the console and the `transfers_inflight` metric. |
 | Redis down | Rate limiter fails **open** and the error is counted. | Payments keep flowing. |
 | Concurrent operations on one payment | The `FOR UPDATE` row lock plus in-flight states make the second request get 409. | Client retries later. |
 | Deadlocks between transfers | Balance rows are locked in sorted key order, so lock cycles cannot form. | N/A |
-| Bank statement disagrees with the ledger | Recon reports typed breaks (missing in bank or ledger, amount mismatch, duplicate, balance mismatch). | Ops investigates; corrections are reversals (I4). |
+| Bank statement disagrees with the ledger | Recon validates the file shape and reports typed breaks (missing in bank or ledger, amount mismatch, duplicate, balance mismatch), including currencies with historical ledger balance but no movements that day. | Ops investigates; corrections are reversals (I4). |

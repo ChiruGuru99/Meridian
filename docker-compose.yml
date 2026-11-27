@@ -131,6 +131,26 @@ services:
       retries: 30
     restart: unless-stopped
 
+  reconciliation:
+    build: ./reconciliation
+    environment:
+      RECON_DB_URL: postgresql://recon:recon@postgres:5432/recon
+      KAFKA_BROKERS: redpanda:9092
+      LEDGER_URL: http://ledger-service:8081
+    volumes:
+      - recon-data:/data
+    ports: ["8083:8083"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redpanda-init: { condition: service_completed_successfully }
+      ledger-service: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
   # ------------------------------------------------------------------ observability
   otel-collector:
     image: otel/opentelemetry-collector:0.161.0
@@ -169,3 +189,4 @@ services:
 
 volumes:
   pgdata:
+  recon-data:
