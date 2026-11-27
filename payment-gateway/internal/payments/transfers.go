@@ -60,12 +60,15 @@ func (s *Service) BeginTransfer(clientID string, req TransferRequest) BeginFunc 
 		if len(req.Reference) > 140 {
 			return nil, "", "", problem(400, "invalid_reference", "reference must be at most 140 characters")
 		}
-		owned, err := ownsAccount(ctx, tx, clientID, req.SourceAccountID)
+		sourceClient, sourceCurrency, sourceFound, err := activeAccountForCurrency(ctx, tx, req.SourceAccountID, req.Amount.Currency)
 		if err != nil {
 			return nil, "", "", err
 		}
-		if !owned {
+		if !sourceFound || sourceClient != clientID {
 			return nil, "", "", problem(404, "account_not_found", "source account %q not found", req.SourceAccountID)
+		}
+		if !sourceCurrency {
+			return nil, "", "", problem(422, "account_currency_not_enabled", "source account %q does not support %s", req.SourceAccountID, req.Amount.Currency)
 		}
 		var dest, iban, name *string
 		switch req.Destination.Type {
@@ -73,6 +76,16 @@ func (s *Service) BeginTransfer(clientID string, req TransferRequest) BeginFunc 
 			if req.Destination.AccountID == "" || req.Destination.AccountID == req.SourceAccountID ||
 				strings.HasPrefix(req.Destination.AccountID, "SYS-") {
 				return nil, "", "", problem(400, "invalid_destination", "destination.account_id is required, must differ from the source and must not be a system account")
+			}
+			_, currencyEnabled, found, err := activeAccountForCurrency(ctx, tx, req.Destination.AccountID, req.Amount.Currency)
+			if err != nil {
+				return nil, "", "", err
+			}
+			if !found {
+				return nil, "", "", problem(404, "account_not_found", "destination account %q not found", req.Destination.AccountID)
+			}
+			if !currencyEnabled {
+				return nil, "", "", problem(422, "account_currency_not_enabled", "destination account %q does not support %s", req.Destination.AccountID, req.Amount.Currency)
 			}
 			dest = &req.Destination.AccountID
 		case "external":

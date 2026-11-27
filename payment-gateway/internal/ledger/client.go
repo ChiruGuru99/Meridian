@@ -45,9 +45,18 @@ type Client struct {
 	timeout time.Duration
 }
 
-func Dial(addr string) (*Client, error) {
+type apiKeyCredentials string
+
+func (c apiKeyCredentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer " + string(c)}, nil
+}
+
+func (apiKeyCredentials) RequireTransportSecurity() bool { return false }
+
+func Dial(addr, apiKey string) (*Client, error) {
 	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithPerRPCCredentials(apiKeyCredentials(apiKey)),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 	)
 	if err != nil {

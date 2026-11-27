@@ -31,7 +31,7 @@ func TestReconciliationFindsInjectedBreaks(t *testing.T) {
 		return transferStatus(t, payout) == "COMPLETED"
 	})
 	waitFor(t, 30*time.Second, "ledger outbox drained", func() bool {
-		return getJSON(t, ledgerURL+"/api/invariants")["outbox_pending"] == float64(0)
+		return getJSON(t, ledgerURL+"/api/invariants", ledgerReadKey)["outbox_pending"] == float64(0)
 	})
 
 	seed := fmt.Sprint(time.Now().Unix() % 100000)
@@ -55,7 +55,7 @@ func TestReconciliationFindsInjectedBreaks(t *testing.T) {
 	if match == nil {
 		t.Fatalf("no run id in report:\n%s", report)
 	}
-	run := getJSON(t, env("RECON_URL", "http://localhost:8083")+"/api/recon/runs/"+match[1])
+	run := getJSON(t, env("RECON_URL", "http://localhost:8083")+"/api/recon/runs/"+match[1], reconReadKey)
 
 	var found, expected []string
 	closing := 0

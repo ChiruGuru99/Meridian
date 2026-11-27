@@ -11,19 +11,22 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"strings"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
 
 var (
-	gatewayURL = env("GATEWAY_URL", "http://localhost:8080")
-	adminURL   = env("GATEWAY_ADMIN_URL", "http://localhost:8082")
-	ledgerURL  = env("LEDGER_URL", "http://localhost:8081")
-	apiKey     = env("API_KEY", "load-key-93ab1c7d5e2f4a60")
-	httpc      = &http.Client{Timeout: 15 * time.Second}
+	gatewayURL    = env("GATEWAY_URL", "http://localhost:8080")
+	adminURL      = env("GATEWAY_ADMIN_URL", "http://localhost:8082")
+	ledgerURL     = env("LEDGER_URL", "http://localhost:8081")
+	apiKey        = env("API_KEY", "load-key-93ab1c7d5e2f4a60")
+	adminKey      = env("ADMIN_API_KEY", "dev-admin-key-0123456789abcdef")
+	ledgerReadKey = env("LEDGER_HTTP_API_KEY", "dev-ledger-read-key-0123456789abcdef")
+	reconReadKey  = env("RECON_API_KEY", "dev-recon-read-key-0123456789abcdef")
+	httpc         = &http.Client{Timeout: 15 * time.Second}
 )
 
 func env(k, def string) string {
@@ -48,6 +51,10 @@ type resp struct {
 
 // call sends a request; key == "" sends no Idempotency-Key.
 func call(t testing.TB, method, url, key string, body any) resp {
+	return callAs(t, apiKey, method, url, key, body)
+}
+
+func callAs(t testing.TB, bearer, method, url, key string, body any) resp {
 	t.Helper()
 	var rd io.Reader
 	if body != nil {
@@ -55,7 +62,7 @@ func call(t testing.TB, method, url, key string, body any) resp {
 		rd = bytes.NewReader(b)
 	}
 	req, _ := http.NewRequest(method, url, rd)
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Authorization", "Bearer "+bearer)
 	req.Header.Set("Content-Type", "application/json")
 	if key != "" {
 		req.Header.Set("Idempotency-Key", key)
@@ -109,7 +116,9 @@ func openAccount(t testing.TB, name string, fundEUR int64) string {
 	}), 201)
 	id := r.Body["id"].(string)
 	if fundEUR > 0 {
-		expect(t, post(t, "/v1/deposits", map[string]any{"account_id": id, "amount": money(fundEUR, "EUR"), "reference": "funding " + name}), 201)
+		expect(t, callAs(t, adminKey, "POST", adminURL+"/ops/deposits", newKey(), map[string]any{
+			"account_id": id, "amount": money(fundEUR, "EUR"), "reference": "funding " + name,
+		}), 201)
 	}
 	return id
 }
@@ -130,7 +139,7 @@ func balance(t testing.TB, accountID, currency string) int64 {
 // assertInvariants checks the ledger's own recomputation of I1, I2, I4 and I7.
 func assertInvariants(t testing.TB) map[string]any {
 	t.Helper()
-	res, err := httpc.Get(ledgerURL + "/api/invariants")
+	res, err := get(t, ledgerURL+"/api/invariants", ledgerReadKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,9 +165,18 @@ func waitFor(t testing.TB, timeout time.Duration, what string, f func() bool) {
 	t.Fatalf("timed out after %s waiting for %s", timeout, what)
 }
 
-func getJSON(t testing.TB, url string) map[string]any {
+func get(t testing.TB, url, key string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	return httpc.Do(req)
+}
+
+func getJSON(t testing.TB, url, key string) map[string]any {
 	t.Helper()
-	res, err := httpc.Get(url)
+	res, err := get(t, url, key)
 	if err != nil {
 		t.Fatal(err)
 	}

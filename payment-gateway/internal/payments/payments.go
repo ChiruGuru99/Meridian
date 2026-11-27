@@ -47,12 +47,25 @@ func (s *Service) BeginCreatePayment(clientID string, req CreatePaymentRequest) 
 		if len(req.Description) > 500 {
 			return nil, "", "", problem(400, "invalid_description", "description must be at most 500 characters")
 		}
-		owned, err := ownsAccount(ctx, tx, clientID, req.PayerAccountID)
+		payerClient, payerCurrency, payerFound, err := activeAccountForCurrency(ctx, tx, req.PayerAccountID, req.Amount.Currency)
 		if err != nil {
 			return nil, "", "", err
 		}
-		if !owned {
+		if !payerFound || payerClient != clientID {
 			return nil, "", "", problem(404, "account_not_found", "payer account %q not found", req.PayerAccountID)
+		}
+		if !payerCurrency {
+			return nil, "", "", problem(422, "account_currency_not_enabled", "payer account %q does not support %s", req.PayerAccountID, req.Amount.Currency)
+		}
+		_, payeeCurrency, payeeFound, err := activeAccountForCurrency(ctx, tx, req.PayeeAccountID, req.Amount.Currency)
+		if err != nil {
+			return nil, "", "", err
+		}
+		if !payeeFound {
+			return nil, "", "", problem(404, "account_not_found", "payee account %q not found", req.PayeeAccountID)
+		}
+		if !payeeCurrency {
+			return nil, "", "", problem(422, "account_currency_not_enabled", "payee account %q does not support %s", req.PayeeAccountID, req.Amount.Currency)
 		}
 		id := newID("pay_")
 		_, err = tx.Exec(ctx, `
@@ -78,7 +91,11 @@ func (s *Service) BeginCreatePayment(clientID string, req CreatePaymentRequest) 
 func (s *Service) BeginPaymentOp(clientID, paymentID string, op Op, amount int64) BeginFunc {
 	return func(ctx context.Context, tx pgx.Tx) (*Response, string, string, error) {
 		p, err := s.GetPayment(ctx, tx, paymentID, true)
-		if errors.Is(err, ErrNotFound) || (err == nil && p.ClientID != clientID) {
+		allowed := false
+		if err == nil {
+			allowed, err = s.paymentOpAllowed(ctx, tx, clientID, p, op)
+		}
+		if errors.Is(err, ErrNotFound) || (err == nil && !allowed) {
 			return nil, "", "", problem(404, "payment_not_found", "payment %q not found", paymentID)
 		}
 		if err != nil {
@@ -134,6 +151,14 @@ func (s *Service) BeginPaymentOp(clientID, paymentID string, op Op, amount int64
 		}
 		return nil, "payment", paymentID, nil
 	}
+}
+
+func (s *Service) paymentOpAllowed(ctx context.Context, q querier, clientID string, p *Payment, op Op) (bool, error) {
+	accountID := p.PayerAccountID
+	if op == OpCapture || op == OpRefund {
+		accountID = p.PayeeAccountID
+	}
+	return ownsAccount(ctx, q, clientID, accountID)
 }
 
 // paymentPostings is the accounting for each in-flight payment state (see DESIGN.md §4).
@@ -276,6 +301,15 @@ func (s *Service) GetPayment(ctx context.Context, q querier, id string, forUpdat
 		return x, err
 	})
 	return p, err
+}
+
+// CanAccessPayment permits the payer and payee clients to read the payment, but no other client.
+func (s *Service) CanAccessPayment(ctx context.Context, q querier, clientID string, p *Payment) (bool, error) {
+	ownedPayer, err := ownsAccount(ctx, q, clientID, p.PayerAccountID)
+	if err != nil || ownedPayer {
+		return ownedPayer, err
+	}
+	return ownsAccount(ctx, q, clientID, p.PayeeAccountID)
 }
 
 // ListPayments is the ops-console query (all clients).

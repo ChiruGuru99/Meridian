@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -73,11 +74,27 @@ func validMoney(m Money) *Problem {
 }
 
 // ownsAccount enforces that a client can only debit accounts it opened.
-func ownsAccount(ctx context.Context, tx pgx.Tx, clientID, accountID string) (bool, error) {
+func ownsAccount(ctx context.Context, q querier, clientID, accountID string) (bool, error) {
 	var ok bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM client_accounts WHERE account_id = $1 AND client_id = $2 AND status = 'ACTIVE')`,
+	err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM client_accounts WHERE account_id = $1 AND client_id = $2 AND status = 'ACTIVE')`,
 		accountID, clientID).Scan(&ok)
 	return ok, err
+}
+
+func activeAccountForCurrency(ctx context.Context, q querier, accountID, currency string) (clientID string, currencyEnabled, found bool, err error) {
+	err = q.QueryRow(ctx, `
+		SELECT client_id,
+		       EXISTS (
+		           SELECT 1
+		           FROM jsonb_array_elements(currencies) AS c(value)
+		           WHERE c.value->>'currency' = $2
+		       )
+		FROM client_accounts
+		WHERE account_id = $1 AND status = 'ACTIVE'`, accountID, currency).Scan(&clientID, &currencyEnabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, false, nil
+	}
+	return clientID, currencyEnabled, err == nil, err
 }
 
 func (s *Service) post(ctx context.Context, op, key, typ, desc string, postings []*ledgerv1.Posting, meta map[string]string) (*ledgerv1.Transaction, error) {
@@ -154,8 +171,8 @@ func (s *Service) BeginCreateAccount(clientID string, req CreateAccountRequest) 
 			if !supportedCurrencies[c.Currency] || seen[c.Currency] {
 				return nil, "", "", problem(422, "unsupported_currency", "currency %q is unsupported or duplicated", c.Currency)
 			}
-			if c.OverdraftLimitMinor < 0 || c.OverdraftLimitMinor > MaxAmount {
-				return nil, "", "", problem(422, "invalid_overdraft_limit", "overdraft_limit_minor must be between 0 and %d", MaxAmount)
+			if c.OverdraftLimitMinor != 0 {
+				return nil, "", "", problem(422, "overdraft_not_allowed", "client-created accounts cannot request an overdraft limit")
 			}
 			seen[c.Currency] = true
 		}
@@ -218,9 +235,9 @@ type DepositRequest struct {
 	Reference string `json:"reference"`
 }
 
-// BeginDeposit simulates inbound funds from the partner bank (in production these arrive as
-// bank notifications, not client API calls).
-func (s *Service) BeginDeposit(clientID string, req DepositRequest) BeginFunc {
+// BeginDeposit represents an authenticated bank notification. It is deliberately not exposed
+// on the client API: the destination account's owner is derived from trusted account metadata.
+func (s *Service) BeginDeposit(req DepositRequest) BeginFunc {
 	return func(ctx context.Context, tx pgx.Tx) (*Response, string, string, error) {
 		if p := validMoney(req.Amount); p != nil {
 			return nil, "", "", p
@@ -228,12 +245,15 @@ func (s *Service) BeginDeposit(clientID string, req DepositRequest) BeginFunc {
 		if len(req.Reference) > 140 {
 			return nil, "", "", problem(400, "invalid_reference", "reference must be at most 140 characters")
 		}
-		owned, err := ownsAccount(ctx, tx, clientID, req.AccountID)
+		clientID, currencyEnabled, found, err := activeAccountForCurrency(ctx, tx, req.AccountID, req.Amount.Currency)
 		if err != nil {
 			return nil, "", "", err
 		}
-		if !owned {
+		if !found {
 			return nil, "", "", problem(404, "account_not_found", "account %q not found", req.AccountID)
+		}
+		if !currencyEnabled {
+			return nil, "", "", problem(422, "account_currency_not_enabled", "account %q does not support %s", req.AccountID, req.Amount.Currency)
 		}
 		id := newID("dep_")
 		_, err = tx.Exec(ctx, `INSERT INTO deposits (id, client_id, account_id, currency, amount, reference, status) VALUES ($1,$2,$3,$4,$5,$6,'PENDING')`,

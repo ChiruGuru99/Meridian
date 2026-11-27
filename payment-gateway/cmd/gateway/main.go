@@ -65,7 +65,10 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	ledgerClient, err := ledger.Dial(env("LEDGER_ADDR", "localhost:9091"))
+	ledgerClient, err := ledger.Dial(
+		env("LEDGER_ADDR", "localhost:9091"),
+		env("LEDGER_API_KEY", "dev-ledger-key-0123456789abcdef"),
+	)
 	if err != nil {
 		return err
 	}
@@ -91,7 +94,10 @@ func run(log *slog.Logger) error {
 	defer consumer.Close()
 
 	svc := &payments.Service{DB: pool, Ledger: ledgerClient, Log: log}
-	srv := &api.Server{Svc: svc, Ledger: ledgerClient, Redis: rdb, Clients: clients, Log: log}
+	srv := &api.Server{
+		Svc: svc, Ledger: ledgerClient, Redis: rdb, Clients: clients,
+		AdminKey: env("ADMIN_API_KEY", "dev-admin-key-0123456789abcdef"), Log: log,
+	}
 
 	go (&outbox.Relay{DB: pool, Kafka: producer, Every: 100 * time.Millisecond, Logger: log}).Run(ctx)
 	go svc.Recover(ctx, time.Second)

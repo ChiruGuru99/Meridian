@@ -27,18 +27,21 @@ import (
 )
 
 var (
-	pool    *pgxpool.Pool
-	rdb     *redis.Client
-	fake    *ledgerfake.Ledger
-	svc     *payments.Service
-	server  *httptest.Server
-	mu      sync.Mutex // tests that inject ledger failures must not overlap with others
-	clients = []Client{
+	pool        *pgxpool.Pool
+	rdb         *redis.Client
+	fake        *ledgerfake.Ledger
+	svc         *payments.Service
+	server      *httptest.Server
+	adminServer *httptest.Server
+	mu          sync.Mutex // tests that inject ledger failures must not overlap with others
+	clients     = []Client{
 		{Key: "test-key-aaaaaaaaaaaaaaaa", ID: "c1", Rate: 1e6, Burst: 1e6},
 		{Key: "test-key-bbbbbbbbbbbbbbbb", ID: "c2", Rate: 1e6, Burst: 1e6},
 		{Key: "test-key-limited-cccccccc", ID: "limited", Rate: 0.01, Burst: 3},
 	}
 )
+
+const adminKey = "test-admin-key-aaaaaaaaaaaaaaaa"
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
@@ -62,9 +65,12 @@ func TestMain(m *testing.M) {
 	fake = ledgerfake.New()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc = &payments.Service{DB: pool, Ledger: fake, Log: log}
-	server = httptest.NewServer((&Server{Svc: svc, Redis: rdb, Clients: clients, Log: log}).Public())
+	apiServer := &Server{Svc: svc, Redis: rdb, Clients: clients, AdminKey: adminKey, Log: log}
+	server = httptest.NewServer(apiServer.Public())
+	adminServer = httptest.NewServer(apiServer.Admin())
 	code := m.Run()
 	server.Close()
+	adminServer.Close()
 	_ = pg.Terminate(ctx)
 	_ = rc.Terminate(ctx)
 	os.Exit(code)
@@ -102,6 +108,10 @@ func newKey() string {
 }
 
 func do(t tb, apiKey, method, path, idemKey string, body any) response {
+	return doAt(t, server.URL, apiKey, method, path, idemKey, body)
+}
+
+func doAt(t tb, baseURL, apiKey, method, path, idemKey string, body any) response {
 	t.Helper()
 	var rd io.Reader
 	switch b := body.(type) {
@@ -112,7 +122,7 @@ func do(t tb, apiKey, method, path, idemKey string, body any) response {
 		j, _ := json.Marshal(b)
 		rd = bytes.NewReader(j)
 	}
-	req, _ := http.NewRequest(method, server.URL+path, rd)
+	req, _ := http.NewRequest(method, baseURL+path, rd)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	if idemKey != "" {
 		req.Header.Set("Idempotency-Key", idemKey)
@@ -146,13 +156,17 @@ func want(t tb, r response, code int, status ...string) response {
 func money(a int64) map[string]any { return map[string]any{"amount_minor": a, "currency": "EUR"} }
 
 func account(t tb, apiKey string, fund int64) string {
+	return accountWith(t, apiKey, fund, []map[string]any{{"currency": "EUR", "overdraft_limit_minor": 0}})
+}
+
+func accountWith(t tb, apiKey string, fund int64, currencies []map[string]any) string {
 	t.Helper()
 	r := want(t, do(t, apiKey, "POST", "/v1/accounts", newKey(), map[string]any{
-		"name": "acct", "currencies": []map[string]any{{"currency": "EUR", "overdraft_limit_minor": 0}},
+		"name": "acct", "currencies": currencies,
 	}), 201)
 	id := r.Body["id"].(string)
 	if fund > 0 {
-		want(t, do(t, apiKey, "POST", "/v1/deposits", newKey(), map[string]any{"account_id": id, "amount": money(fund), "reference": "fund"}), 201)
+		want(t, doAt(t, adminServer.URL, adminKey, "POST", "/ops/deposits", newKey(), map[string]any{"account_id": id, "amount": money(fund), "reference": "fund"}), 201)
 	}
 	return id
 }
@@ -435,9 +449,24 @@ func TestOwnershipAndValidation(t *testing.T) {
 	want(t, post(t, "/v1/payments", map[string]any{"payer_account_id": theirs, "payee_account_id": mine, "amount": money(1)}), 404)
 	want(t, post(t, "/v1/transfers", map[string]any{"source_account_id": theirs, "destination": map[string]any{"type": "internal", "account_id": mine}, "amount": money(1)}), 404)
 	id := payment(t, mine, theirs, 1)
-	want(t, do(t, c2, "GET", "/v1/payments/"+id, "", nil), 404)
+	want(t, do(t, c2, "GET", "/v1/payments/"+id, "", nil), 200)
 	want(t, do(t, c2, "POST", "/v1/payments/"+id+"/authorise", newKey(), nil), 404)
+	want(t, post(t, "/v1/payments/"+id+"/authorise", nil), 200)
+	want(t, post(t, "/v1/payments/"+id+"/capture", nil), 404)
+	want(t, do(t, c2, "POST", "/v1/payments/"+id+"/capture", newKey(), nil), 200)
+	want(t, post(t, "/v1/payments/"+id+"/refunds", nil), 404)
+	want(t, do(t, c2, "POST", "/v1/payments/"+id+"/refunds", newKey(), nil), 200)
 	want(t, do(t, c2, "GET", "/v1/accounts/"+mine, "", nil), 404)
+	want(t, post(t, "/v1/payments", map[string]any{"payer_account_id": mine, "payee_account_id": "acc_missing", "amount": money(1)}), 404)
+	want(t, post(t, "/v1/payments", map[string]any{"payer_account_id": mine, "payee_account_id": "SYS-NOSTRO", "amount": money(1)}), 404)
+	multi := accountWith(t, c1, 0, []map[string]any{
+		{"currency": "EUR", "overdraft_limit_minor": 0},
+		{"currency": "USD", "overdraft_limit_minor": 0},
+	})
+	want(t, post(t, "/v1/payments", map[string]any{
+		"payer_account_id": multi, "payee_account_id": theirs,
+		"amount": map[string]any{"amount_minor": 1, "currency": "USD"},
+	}), 422)
 
 	want(t, post(t, "/v1/payments", `{"payer_account_id":"`+mine+`","payee_account_id":"x","amount":{"amount_minor":10.5,"currency":"EUR"}}`), 400)
 	want(t, post(t, "/v1/payments", `{"payer_account_id":"`+mine+`","payee_account_id":"x","amount":{"amount_minor":10,"currency":"EUR"},"extra":1}`), 400)
@@ -445,7 +474,23 @@ func TestOwnershipAndValidation(t *testing.T) {
 	want(t, post(t, "/v1/payments", map[string]any{"payer_account_id": mine, "payee_account_id": "x", "amount": money(0)}), 422)
 	want(t, do(t, c1, "POST", "/v1/payments", "", map[string]any{"payer_account_id": mine, "payee_account_id": "x", "amount": money(1)}), 400)
 	want(t, do(t, "wrong-key-xxxxxxxxxxxx", "GET", "/v1/payments/"+id, "", nil), 401)
+	want(t, post(t, "/v1/accounts", map[string]any{
+		"name": "credit", "currencies": []map[string]any{{"currency": "EUR", "overdraft_limit_minor": 1}},
+	}), 422)
 	want(t, post(t, "/v1/transfers", map[string]any{"source_account_id": mine, "destination": map[string]any{"type": "external", "iban": "DE00000000000000000000", "name": "x"}, "amount": money(1)}), 400)
+}
+
+func TestDepositsAndOpsRequireAdminCredential(t *testing.T) {
+	id := account(t, c1, 0)
+	body := map[string]any{"account_id": id, "amount": money(100), "reference": "bank notification"}
+	want(t, post(t, "/v1/deposits", body), 404)
+	want(t, doAt(t, adminServer.URL, c1, "POST", "/ops/deposits", newKey(), body), 401)
+	want(t, doAt(t, adminServer.URL, adminKey, "POST", "/ops/deposits", newKey(), body), 201)
+	if eur(id) != 100 {
+		t.Fatalf("admin deposit balance = %d", eur(id))
+	}
+	want(t, doAt(t, adminServer.URL, "", "GET", "/ops/payments", "", nil), 401)
+	want(t, doAt(t, adminServer.URL, adminKey, "GET", "/ops/payments", "", nil), 200)
 }
 
 func TestRateLimitAndFailOpen(t *testing.T) {

@@ -67,11 +67,12 @@ func ParseClients(spec string) ([]Client, error) {
 }
 
 type Server struct {
-	Svc     *payments.Service
-	Ledger  *ledger.Client
-	Redis   *redis.Client
-	Clients []Client
-	Log     *slog.Logger
+	Svc      *payments.Service
+	Ledger   *ledger.Client
+	Redis    *redis.Client
+	Clients  []Client
+	AdminKey string
+	Log      *slog.Logger
 }
 
 type ctxKey struct{}
@@ -89,13 +90,6 @@ func (s *Server) Public() http.Handler {
 		return s.Svc.BeginCreateAccount(c.ID, req), nil
 	}))
 	mux.HandleFunc("GET /v1/accounts/{id}", s.getAccount)
-	mux.HandleFunc("POST /v1/deposits", s.mutate(func(r *http.Request, c Client, body []byte) (payments.BeginFunc, *payments.Problem) {
-		var req payments.DepositRequest
-		if p := decode(body, &req); p != nil {
-			return nil, p
-		}
-		return s.Svc.BeginDeposit(c.ID, req), nil
-	}))
 	mux.HandleFunc("POST /v1/payments", s.mutate(func(r *http.Request, c Client, body []byte) (payments.BeginFunc, *payments.Problem) {
 		var req payments.CreatePaymentRequest
 		if p := decode(body, &req); p != nil {
@@ -137,27 +131,30 @@ type builder func(r *http.Request, c Client, body []byte) (payments.BeginFunc, *
 
 func (s *Server) mutate(build builder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		c := clientFrom(r)
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
-		if err != nil {
-			writeProblem(w, &payments.Problem{Status: 413, Code: "body_too_large", Detail: "request body must be at most 64 KiB"})
-			return
-		}
-		begin, p := build(r, c, body)
-		if p != nil {
-			writeProblem(w, p)
-			return
-		}
-		resp, err := s.Svc.Execute(r.Context(), c.ID, r.Header.Get("Idempotency-Key"), r.Method, r.URL.Path, body, begin)
-		if err != nil {
-			s.internalError(w, r, err)
-			return
-		}
-		if resp.Replayed {
-			w.Header().Set("Idempotent-Replayed", "true")
-		}
-		writeRaw(w, resp.Code, resp.Body)
+		s.mutateAs(clientFrom(r).ID, w, r, build)
 	}
+}
+
+func (s *Server) mutateAs(clientID string, w http.ResponseWriter, r *http.Request, build builder) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		writeProblem(w, &payments.Problem{Status: 413, Code: "body_too_large", Detail: "request body must be at most 64 KiB"})
+		return
+	}
+	begin, p := build(r, Client{ID: clientID}, body)
+	if p != nil {
+		writeProblem(w, p)
+		return
+	}
+	resp, err := s.Svc.Execute(r.Context(), clientID, r.Header.Get("Idempotency-Key"), r.Method, r.URL.Path, body, begin)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if resp.Replayed {
+		w.Header().Set("Idempotent-Replayed", "true")
+	}
+	writeRaw(w, resp.Code, resp.Body)
 }
 
 func (s *Server) getAccount(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +180,11 @@ func (s *Server) getAccount(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getPayment(w http.ResponseWriter, r *http.Request) {
 	p, err := s.Svc.GetPayment(r.Context(), s.Svc.DB, r.PathValue("id"))
-	if errors.Is(err, payments.ErrNotFound) || (err == nil && p.ClientID != clientFrom(r).ID) {
+	allowed := false
+	if err == nil {
+		allowed, err = s.Svc.CanAccessPayment(r.Context(), s.Svc.DB, clientFrom(r).ID, p)
+	}
+	if errors.Is(err, payments.ErrNotFound) || (err == nil && !allowed) {
 		writeProblem(w, &payments.Problem{Status: 404, Code: "payment_not_found", Detail: "payment not found"})
 		return
 	}

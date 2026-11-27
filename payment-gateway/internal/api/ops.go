@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -13,18 +15,28 @@ import (
 	"meridian/gateway/internal/payments"
 )
 
-// Admin returns the internal handler (:8082): read-only ops queries, metrics and health.
-// It is not exposed to API clients; the ops console reaches it through its nginx proxy.
+// Admin returns the internal handler (:8082): ops queries, bank deposits, metrics and health.
+// Money-moving and data routes require the admin credential.
 func (s *Server) Admin() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "UP"}) })
 	mux.HandleFunc("GET /readyz", s.ready)
-	mux.HandleFunc("GET /ops/payments", func(w http.ResponseWriter, r *http.Request) {
+	ops := http.NewServeMux()
+	ops.HandleFunc("POST /ops/deposits", func(w http.ResponseWriter, r *http.Request) {
+		s.mutateAs("bank-notifications", w, r, func(r *http.Request, _ Client, body []byte) (payments.BeginFunc, *payments.Problem) {
+			var req payments.DepositRequest
+			if p := decode(body, &req); p != nil {
+				return nil, p
+			}
+			return s.Svc.BeginDeposit(req), nil
+		})
+	})
+	ops.HandleFunc("GET /ops/payments", func(w http.ResponseWriter, r *http.Request) {
 		ps, err := s.Svc.ListPayments(r.Context(), r.URL.Query().Get("status"), limit(r))
 		s.reply(w, r, ps, err)
 	})
-	mux.HandleFunc("GET /ops/payments/{id}", func(w http.ResponseWriter, r *http.Request) {
+	ops.HandleFunc("GET /ops/payments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.Svc.GetPayment(r.Context(), s.Svc.DB, r.PathValue("id"))
 		if err != nil {
 			s.reply(w, r, nil, err)
@@ -33,11 +45,11 @@ func (s *Server) Admin() http.Handler {
 		tl, err := s.Svc.Timeline(r.Context(), p.ID)
 		s.reply(w, r, map[string]any{"payment": p, "timeline": tl}, err)
 	})
-	mux.HandleFunc("GET /ops/transfers", func(w http.ResponseWriter, r *http.Request) {
+	ops.HandleFunc("GET /ops/transfers", func(w http.ResponseWriter, r *http.Request) {
 		ts, err := s.Svc.ListTransfers(r.Context(), r.URL.Query().Get("status"), limit(r))
 		s.reply(w, r, ts, err)
 	})
-	mux.HandleFunc("GET /ops/transfers/{id}", func(w http.ResponseWriter, r *http.Request) {
+	ops.HandleFunc("GET /ops/transfers/{id}", func(w http.ResponseWriter, r *http.Request) {
 		t, err := s.Svc.GetTransfer(r.Context(), s.Svc.DB, r.PathValue("id"))
 		if err != nil {
 			s.reply(w, r, nil, err)
@@ -46,8 +58,21 @@ func (s *Server) Admin() http.Handler {
 		tl, err := s.Svc.Timeline(r.Context(), t.ID)
 		s.reply(w, r, map[string]any{"transfer": t, "timeline": tl}, err)
 	})
-	mux.HandleFunc("GET /ops/summary", s.summary)
+	ops.HandleFunc("GET /ops/summary", s.summary)
+	mux.Handle("/ops/", s.authenticateAdmin(ops))
 	return mux
+}
+
+func (s *Server) authenticateAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || s.AdminKey == "" || subtle.ConstantTimeCompare([]byte(token), []byte(s.AdminKey)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="meridian-admin"`)
+			writeProblem(w, &payments.Problem{Status: 401, Code: "unauthenticated", Detail: "a valid admin credential is required"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) reply(w http.ResponseWriter, r *http.Request, v any, err error) {
