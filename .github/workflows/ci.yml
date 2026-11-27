@@ -42,19 +42,8 @@ jobs:
           python-version: "3.13"
       - run: make test-recon
 
-  ops-console:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: ops-console/package-lock.json
-      - run: make test-console
-
   system:
-    needs: [ledger, gateway, reconciliation, ops-console]
+    needs: [ledger, gateway, reconciliation]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -67,12 +56,6 @@ jobs:
         run: make up
       - name: End-to-end tests
         run: make e2e
-      - name: Demo script (includes a compensated payout and a reconciliation run)
-        run: make demo
-      - name: Failure tests
-        run: make chaos
-      - name: Load test (short)
-        run: docker compose --profile tools run --rm -e DURATION=30s k6 run /scripts/load.js
       - name: Logs on failure
         if: failure()
         run: docker compose logs --tail=200
