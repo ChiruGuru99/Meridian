@@ -21,7 +21,7 @@
     <grpc.version>1.84.2</grpc.version>
     <protobuf.version>4.36.2</protobuf.version>
     <jqwik.version>1.10.2</jqwik.version>
-    <otel-agent.version>2.32.0</otel-agent.version>
+    <otel-agent.version>2.34.0</otel-agent.version>
   </properties>
 
   <dependencies>
