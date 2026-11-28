@@ -116,6 +116,10 @@ With the Compose stack running:
 make e2e
 ```
 
+Pull requests are checked by the test suites, CodeQL code scanning, and GitHub's
+dependency review. Dependabot monitors GitHub Actions, Maven, Go, Python, and
+container dependencies.
+
 ## Reconciliation
 
 Generate a simulated statement and run reconciliation:

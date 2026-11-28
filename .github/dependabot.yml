@@ -1,0 +1,40 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: gomod
+    directory: /payment-gateway
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: maven
+    directory: /ledger-service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: pip
+    directory: /reconciliation
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: docker
+    directory: /ledger-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /payment-gateway
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /reconciliation
+    schedule:
+      interval: weekly
