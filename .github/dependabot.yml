@@ -5,36 +5,64 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: gomod
     directory: /payment-gateway
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: maven
     directory: /ledger-service
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: pip
     directory: /reconciliation
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /ledger-service
     schedule:
       interval: weekly
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /payment-gateway
     schedule:
       interval: weekly
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /reconciliation
     schedule:
       interval: weekly
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
