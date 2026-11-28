@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class HttpApiKeyFilterTest {
@@ -37,5 +39,24 @@ class HttpApiKeyFilterTest {
                 "GET", "/actuator/health/readiness");
         filter.doFilter(health, new MockHttpServletResponse(), (req, res) -> called[0] = true);
         assertThat(called[0]).isTrue();
+    }
+
+    @Test
+    void rejectsWrongAndMalformedReadApiCredentials() throws Exception {
+        for (String authorization : List.of(
+                "Basic test-ledger-read-key-0123456789abcdef",
+                "Bearer wrong-ledger-read-key",
+                "bearer test-ledger-read-key-0123456789abcdef")) {
+            MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/accounts");
+            request.addHeader("Authorization", authorization);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            boolean[] called = {false};
+
+            filter.doFilter(request, response, (req, res) -> called[0] = true);
+
+            assertThat(called[0]).isFalse();
+            assertThat(response.getStatus()).isEqualTo(401);
+            assertThat(response.getHeader("WWW-Authenticate")).contains("Bearer");
+        }
     }
 }
