@@ -1,5 +1,5 @@
 # Build context: repository root (the build needs ../proto).
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-26 AS build
 WORKDIR /src
 COPY proto proto
 COPY ledger-service/pom.xml ledger-service/pom.xml
