@@ -6,7 +6,7 @@ COPY ledger-service/pom.xml ledger-service/pom.xml
 COPY ledger-service/src ledger-service/src
 RUN --mount=type=cache,target=/root/.m2 cd ledger-service && mvn -B -q -DskipTests package
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 app
 WORKDIR /app
