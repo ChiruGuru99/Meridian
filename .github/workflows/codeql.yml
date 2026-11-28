@@ -25,13 +25,18 @@ jobs:
       matrix:
         include:
           - language: go
-            build-mode: none
+            build-mode: manual
           - language: java-kotlin
             build-mode: manual
           - language: python
             build-mode: none
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        if: matrix.language == 'go'
+        with:
+          go-version-file: payment-gateway/go.mod
+          cache-dependency-path: payment-gateway/go.sum
       - uses: actions/setup-java@v4
         if: matrix.language == 'java-kotlin'
         with:
@@ -42,6 +47,10 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+      - name: Compile Go sources
+        if: matrix.language == 'go'
+        working-directory: payment-gateway
+        run: go build ./...
       - name: Compile Java sources
         if: matrix.language == 'java-kotlin'
         run: mvn -B -ntp -f ledger-service/pom.xml -DskipTests compile
